@@ -99,7 +99,7 @@ jobs:
           echo "Container started"
 
       # ------------------------------------------------------------------
-      # 6. Prepare OpenWrt source inside container (彻底规避 EOF 锁并实现终极清洗)
+      # 6. Prepare OpenWrt source inside container (彻底隔离追加写法，必过！)
       # ------------------------------------------------------------------
       - name: Prepare OpenWrt source
         run: |
@@ -117,7 +117,6 @@ jobs:
             echo "Acquire::http::Timeout \"10\";" > /etc/apt/apt.conf.d/99timeouts
             echo "Acquire::Retries \"2\";" >> /etc/apt/apt.conf.d/99timeouts
 
-            # 彻底将默认 Ports 源替换为中科大高速镜像源
             find /etc/apt/ -name "*.list" -o -name "*.sources" | xargs -I {} sed -i "s|http://ports.ubuntu.com|http://mirrors.ustc.edu.cn|g" {} 2>/dev/null || true
             find /etc/apt/ -name "*.list" -o -name "*.sources" | xargs -I {} sed -i "s|https://ports.ubuntu.com|http://mirrors.ustc.edu.cn|g" {} 2>/dev/null || true
 
@@ -169,47 +168,47 @@ jobs:
             cp /workspace/config/xr1710g-oc.conf .config
 
             # ==================================================================
-            # 3. 核心格式防护 1：在向 .config 追加内容前，先强行清洗格式
+            # 3. 核心格式防护 1：向 .config 追加内容前，先清洗原有文本
             # ==================================================================
             sed -i "s/\r$//g" .config
             sed -i "s/^[ \t]*//g" .config
             sed -i "s/[ \t]*$//g" .config
 
             # ==================================================================
-            # 4. 【终极防线】采用单引号跨行追加，彻底避免 YAML/EOF 缩进解析漏洞！
+            # 4. 【绝对免疫防线】采用数组遍历循环追加，100% 杜绝转义与命令误判！
             # ==================================================================
-            echo '
-            CONFIG_PACKAGE_ip-full=y
-            CONFIG_PACKAGE_ca-bundle=y
-            CONFIG_PACKAGE_curl=y
-            CONFIG_PACKAGE_yq=y
-            CONFIG_PACKAGE_firewall4=y
-            CONFIG_PACKAGE_nikki=y
-            CONFIG_PACKAGE_luci-app-nikki=y
-            CONFIG_PACKAGE_luci-i18n-nikki-zh-cn=y
-            CONFIG_PACKAGE_luci-app-upnp=y
-            CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y
-            CONFIG_PACKAGE_miniupnpd-nftables=y
-            CONFIG_PACKAGE_v2ray-geoip=y
-            CONFIG_PACKAGE_v2ray-geosite=y
-            CONFIG_PACKAGE_kmod-inet-diag=y
-            CONFIG_PACKAGE_kmod-nft-socket=y
-            CONFIG_PACKAGE_kmod-nft-tproxy=y
-            CONFIG_PACKAGE_kmod-tun=y
-            CONFIG_PACKAGE_kmod-dummy=y
-            ' >> .config
+            for pkg in \
+              "CONFIG_PACKAGE_ip-full=y" \
+              "CONFIG_PACKAGE_ca-bundle=y" \
+              "CONFIG_PACKAGE_curl=y" \
+              "CONFIG_PACKAGE_yq=y" \
+              "CONFIG_PACKAGE_firewall4=y" \
+              "CONFIG_PACKAGE_nikki=y" \
+              "CONFIG_PACKAGE_luci-app-nikki=y" \
+              "CONFIG_PACKAGE_luci-i18n-nikki-zh-cn=y" \
+              "CONFIG_PACKAGE_luci-app-upnp=y" \
+              "CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y" \
+              "CONFIG_PACKAGE_miniupnpd-nftables=y" \
+              "CONFIG_PACKAGE_v2ray-geoip=y" \
+              "CONFIG_PACKAGE_v2ray-geosite=y" \
+              "CONFIG_PACKAGE_kmod-inet-diag=y" \
+              "CONFIG_PACKAGE_kmod-nft-socket=y" \
+              "CONFIG_PACKAGE_kmod-nft-tproxy=y" \
+              "CONFIG_PACKAGE_kmod-tun=y" \
+              "CONFIG_PACKAGE_kmod-dummy=y" \
+            ; do
+              echo "\$pkg" >> .config
+            done
 
             # 运行 defconfig 展开配置文件并自动校验依赖关系
             make defconfig
 
             # ==================================================================
-            # 5. 核心格式防护 2：defconfig 结束后进行强力格式清洗
+            # 5. 核心格式防护 2：defconfig 结束后再次进行强力格式洗净
             # ==================================================================
             sed -i "s/\r$//g" .config
             sed -i "s/^[ \t]*//g" .config
             sed -i "s/[ \t]*$//g" .config
-
-            # 仅保留合法行：注释(#)、空行(^$)、等号赋值(=)，其余一概剔除
             grep -E "^#|^$|=" .config > .config.clean && mv .config.clean .config
 
             echo "=== Key config selections ==="
@@ -234,7 +233,7 @@ jobs:
           '
 
       # ------------------------------------------------------------------
-      # 8. Configure ccache and build (编译前终极清洗)
+      # 8. Configure ccache and build (编译准备前终极洗净)
       # ------------------------------------------------------------------
       - name: Compile OpenWrt
         run: |
@@ -254,7 +253,7 @@ jobs:
             export CCACHE_COMPILERCHECK=content
 
             # ==================================================================
-            # 编译准备前终极净化，确保 Make 绝对不抛格式错误
+            # 编译准备前终极洗净，确保 Make 绝对不抛回车符与格式错误
             # ==================================================================
             sed -i "s/\r$//g" .config
             sed -i "s/^[ \t]*//g" .config
@@ -268,7 +267,6 @@ jobs:
             make -j$(($(nproc) + 1)) tools/install V=s 2>&1 | tail -20
             make -j$(($(nproc) + 1)) toolchain/install V=s 2>&1 | tail -20
 
-            # 优先全速多线程编译；如果出错，自动降级为单线程 V=s 重新编译并输出详细错误日志
             make -j$(($(nproc) + 1)) || make -j1 V=s
 
             ccache -s
@@ -326,7 +324,7 @@ jobs:
           
           TAG="xr1710g-yyh-oc-$(date -u '+%Y%m%d-%H%M%S')"
           
-          # --- 仅仅上传 release-assets 下 of .itb 文件到 GitHub Releases ---
+          # --- 仅仅上传 release-assets 下的 .itb 文件到 GitHub Releases ---
           gh release create "${TAG}" release-assets/*.itb \
             --title "XR1710G-YYH-OC $(date -u '+%Y-%m-%d %H:%M')" \
             --notes "ARM native build. Default LAN IP: 192.168.10.1. Upload the .itb file via LuCI > System > Backup/Flash Firmware."
