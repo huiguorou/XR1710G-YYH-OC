@@ -99,7 +99,7 @@ jobs:
           echo "Container started"
 
       # ------------------------------------------------------------------
-      # 6. Prepare OpenWrt source inside container (已加入防网络死锁与二重格式清洗)
+      # 6. Prepare OpenWrt source inside container (防网络超时 + 自动删错补丁 + 强格式洗净)
       # ------------------------------------------------------------------
       - name: Prepare OpenWrt source
         run: |
@@ -111,15 +111,15 @@ jobs:
             -e GH_TOKEN="${GH_TOKEN}" \
             DK bash -euxc '
             # ==================================================================
-            # APT 编译环境加速与防卡死核心优化 (终极增强版)
+            # 1. APT 编译环境加速与防卡死核心优化 (终极增强版)
             # ==================================================================
             echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4
             echo "Acquire::http::Timeout \"10\";" > /etc/apt/apt.conf.d/99timeouts
             echo "Acquire::Retries \"2\";" >> /etc/apt/apt.conf.d/99timeouts
 
+            # 彻底将默认 Ports 源替换为中科大高速镜像源
             find /etc/apt/ -name "*.list" -o -name "*.sources" | xargs -I {} sed -i "s|http://ports.ubuntu.com|http://mirrors.ustc.edu.cn|g" {} 2>/dev/null || true
             find /etc/apt/ -name "*.list" -o -name "*.sources" | xargs -I {} sed -i "s|https://ports.ubuntu.com|http://mirrors.ustc.edu.cn|g" {} 2>/dev/null || true
-            cat /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null | grep -E "URIs|deb " || true
 
             apt-get update -qq
             apt-get install -y --no-install-recommends \
@@ -144,7 +144,7 @@ jobs:
             ln -sf /stcache staging_dir
 
             # ==================================================================
-            # 核心安全清理：动态删除所有易导致行号冲突的静态补丁文件
+            # 2. 核心安全清理：动态删除所有易导致行号冲突的静态补丁文件
             # ==================================================================
             find /workspace -name "*004-add-upnp-v2ray-geo-packages.patch*" -delete 2>/dev/null || true
             find /workspace -name "*006-add-argon-theme-feed.patch*" -delete 2>/dev/null || true
@@ -158,22 +158,24 @@ jobs:
             ./scripts/feeds update -a
             ./scripts/feeds install -a
             
-            # --- 核心修改：将默认 LAN IP 修改为 192.168.10.1 ---
+            # --- 将默认 LAN IP 修改为 192.168.10.1 ---
             sed -i "s/192.168.1.1/192.168.10.1/g" package/base-files/files/bin/config_generate
             echo "Default LAN IP changed to 192.168.10.1"
 
-            # 应用本地其余补丁（此时 004 与 006 已被安全移除，打补丁将顺利通过）
+            # 应用本地其余补丁（由于冲突补丁已在上方安全剔除，此处将完美通过）
             /workspace/scripts/apply-patches.sh /bld/openwrt
             
             # 复制基础硬件配置文件
             cp /workspace/config/xr1710g-oc.conf .config
 
             # ==================================================================
-            # 核心格式防护 1：在向 .config 追加内容之前，先强行清理 Windows 回车符
+            # 3. 核心格式防护 1：在向 .config 追加内容前，先强行清洗格式
             # ==================================================================
             sed -i "s/\r$//g" .config
+            sed -i "s/^[ \t]*//g" .config
+            sed -i "s/[ \t]*$//g" .config
 
-            # --- 追加所有的自定义功能、Nikki、UPnP、V2Ray 与 kmod 依赖 ---
+            # --- 动态追加 Nikki 核心插件、原 004 补丁插件及必须的 kmod 依赖 ---
             cat >> .config <<EOF
             # CONFIG_PACKAGE_ip is not set
             CONFIG_PACKAGE_ip-full=y
@@ -200,9 +202,11 @@ jobs:
             make defconfig
 
             # ==================================================================
-            # 核心格式防护 2：defconfig 结束后，再次强行清洗新生成的 .config
+            # 4. 核心格式防护 2：defconfig 结束后再次做强力格式清洗
             # ==================================================================
             sed -i "s/\r$//g" .config
+            sed -i "s/^[ \t]*//g" .config
+            sed -i "s/[ \t]*$//g" .config
 
             echo "=== Key config selections ==="
             grep -E "^CONFIG_TARGET|^CONFIG_PACKAGE_nikki|^CONFIG_PACKAGE_luci-app-upnp|^CONFIG_PACKAGE_v2ray-geoip|^CONFIG_PACKAGE_kmod-nft|^CONFIG_CCACHE" .config || true
@@ -226,7 +230,7 @@ jobs:
           '
 
       # ------------------------------------------------------------------
-      # 8. Configure ccache and build (自动降级单线程报错容错 + 三重格式洗净)
+      # 8. Configure ccache and build (编译前终极清洗 + 单线程报错降级)
       # ------------------------------------------------------------------
       - name: Compile OpenWrt
         run: |
@@ -246,9 +250,11 @@ jobs:
             export CCACHE_COMPILERCHECK=content
 
             # ==================================================================
-            # 核心格式防护 3：编译准备前终极洗净，确保 Make 绝对不抛 CR 错误
+            # 5. 核心格式防护 3：编译准备前终极洗净，确保 Make 绝对不抛 CR 错误
             # ==================================================================
             sed -i "s/\r$//g" .config
+            sed -i "s/^[ \t]*//g" .config
+            sed -i "s/[ \t]*$//g" .config
 
             sed -i "s/# CONFIG_CCACHE is not set/CONFIG_CCACHE=y/" .config
             ccache -M 5G
