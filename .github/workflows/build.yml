@@ -99,7 +99,7 @@ jobs:
           echo "Container started"
 
       # ------------------------------------------------------------------
-      # 6. Prepare OpenWrt source inside container (新增修改 LAN IP 逻辑)
+      # 6. Prepare OpenWrt source inside container (动态追加源，杜绝补丁报错)
       # ------------------------------------------------------------------
       - name: Prepare OpenWrt source
         run: |
@@ -132,8 +132,17 @@ jobs:
             ln -sf /dlcache dl
             ln -sf /stcache staging_dir
 
-            # --- 注入官方 Nikki 软件源 ---
+            # ==================================================================
+            # 核心安全清理：动态删除容器挂载区中会导致报错的 006 静态补丁文件
+            # ==================================================================
+            find /workspace -name "*006-add-argon-theme-feed.patch*" -delete 2>/dev/null || true
+            find /workspace -name "*argon*.patch" -delete 2>/dev/null || true
+
+            # --- 动态注入官方 Nikki 软件源 ---
             echo "src-git nikki https://github.com/nikkinikki-org/OpenWrt-nikki.git;main" >> feeds.conf.default
+
+            # --- 动态注入 Jerrykuku Argon 官方主题源（完美替代失效的静态补丁） ---
+            echo "src-git argon https://github.com/jerrykuku/luci-theme-argon.git" >> feeds.conf.default
 
             ./scripts/feeds update -a
             ./scripts/feeds install -a
@@ -142,7 +151,7 @@ jobs:
             sed -i "s/192.168.1.1/192.168.10.1/g" package/base-files/files/bin/config_generate
             echo "Default LAN IP changed to 192.168.10.1"
 
-            # 应用本地补丁
+            # 应用本地其余补丁（由于 006 补丁已被安全移除，此处将顺利通过不报错）
             /workspace/scripts/apply-patches.sh /bld/openwrt
             
             # 复制基础硬件配置文件
@@ -250,7 +259,7 @@ jobs:
           ls -la artifacts/
 
       # ------------------------------------------------------------------
-      # 10. Upload artifacts (GitHub Actions 临时流水线产物保留完整排错信息)
+      # 10. Upload artifacts (保留Actions临时运行记录以便排错)
       # ------------------------------------------------------------------
       - name: Upload artifacts
         if: always()
@@ -262,7 +271,7 @@ jobs:
           retention-days: 30
 
       # ------------------------------------------------------------------
-      # 11. Publish to GitHub Releases (修改为仅发布单一 .itb 文件)
+      # 11. Publish to GitHub Releases (严格限制：仅发布单一 .itb 文件)
       # ------------------------------------------------------------------
       - name: Publish to GitHub Releases
         if: success()
