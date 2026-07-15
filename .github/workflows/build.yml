@@ -99,7 +99,7 @@ jobs:
           echo "Container started"
 
       # ------------------------------------------------------------------
-      # 6. Prepare OpenWrt source inside container (动态追加源，杜绝补丁报错)
+      # 6. Prepare OpenWrt source inside container (彻底解决补丁冲突与依赖注入)
       # ------------------------------------------------------------------
       - name: Prepare OpenWrt source
         run: |
@@ -133,15 +133,17 @@ jobs:
             ln -sf /stcache staging_dir
 
             # ==================================================================
-            # 核心安全清理：动态删除容器挂载区中会导致报错的 006 静态补丁文件
+            # 核心安全清理：动态删除所有易导致行号冲突的静态补丁文件 (004 和 006)
             # ==================================================================
+            find /workspace -name "*004-add-upnp-v2ray-geo-packages.patch*" -delete 2>/dev/null || true
             find /workspace -name "*006-add-argon-theme-feed.patch*" -delete 2>/dev/null || true
             find /workspace -name "*argon*.patch" -delete 2>/dev/null || true
+            find /workspace -name "*upnp*.patch" -delete 2>/dev/null || true
 
             # --- 动态注入官方 Nikki 软件源 ---
             echo "src-git nikki https://github.com/nikkinikki-org/OpenWrt-nikki.git;main" >> feeds.conf.default
 
-            # --- 动态注入 Jerrykuku Argon 官方主题源（完美替代失效的静态补丁） ---
+            # --- 动态注入 Jerrykuku Argon 官方主题源 ---
             echo "src-git argon https://github.com/jerrykuku/luci-theme-argon.git" >> feeds.conf.default
 
             ./scripts/feeds update -a
@@ -151,13 +153,13 @@ jobs:
             sed -i "s/192.168.1.1/192.168.10.1/g" package/base-files/files/bin/config_generate
             echo "Default LAN IP changed to 192.168.10.1"
 
-            # 应用本地其余补丁（由于 006 补丁已被安全移除，此处将顺利通过不报错）
+            # 应用本地其余补丁（此时 004 与 006 已被删除，打补丁将顺利通过）
             /workspace/scripts/apply-patches.sh /bld/openwrt
             
             # 复制基础硬件配置文件
             cp /workspace/config/xr1710g-oc.conf .config
 
-            # --- 追加 Nikki 核心插件及系统/内核必须依赖 ---
+            # --- 追加所有的自定义功能、Nikki、UPnP、V2Ray 与 kmod 依赖 ---
             cat >> .config <<EOF
             # 解决路由包冲突：取消默认简陋版 ip 工具，强制启用 ip-full
             # CONFIG_PACKAGE_ip is not set
@@ -174,6 +176,15 @@ jobs:
             CONFIG_PACKAGE_luci-app-nikki=y
             CONFIG_PACKAGE_luci-i18n-nikki-zh-cn=y
 
+            # --- 替代原本 004 补丁：动态集成 UPnP 及其防火墙后台和中文包 ---
+            CONFIG_PACKAGE_luci-app-upnp=y
+            CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y
+            CONFIG_PACKAGE_miniupnpd-nftables=y
+
+            # --- 替代原本 004 补丁：动态集成 V2Ray GeoIP/GeoSite 数据库 ---
+            CONFIG_PACKAGE_v2ray-geoip=y
+            CONFIG_PACKAGE_v2ray-geosite=y
+
             # 核心内核模块 (kmod) - 处理 TPROXY 透明代理与 TUN 模式必须
             CONFIG_PACKAGE_kmod-inet-diag=y
             CONFIG_PACKAGE_kmod-nft-socket=y
@@ -186,7 +197,7 @@ jobs:
             make defconfig
 
             echo "=== Key config selections ==="
-            grep -E "^CONFIG_TARGET|^CONFIG_PACKAGE_nikki|^CONFIG_PACKAGE_kmod-nft|^CONFIG_PACKAGE_kmod-tun|^CONFIG_CCACHE" .config || true
+            grep -E "^CONFIG_TARGET|^CONFIG_PACKAGE_nikki|^CONFIG_PACKAGE_luci-app-upnp|^CONFIG_PACKAGE_v2ray-geoip|^CONFIG_PACKAGE_kmod-nft|^CONFIG_CCACHE" .config || true
           '
 
       # ------------------------------------------------------------------
