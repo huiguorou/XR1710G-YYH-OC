@@ -99,7 +99,7 @@ jobs:
           echo "Container started"
 
       # ------------------------------------------------------------------
-      # 6. Prepare OpenWrt source inside container (彻底解决补丁冲突与依赖注入)
+      # 6. Prepare OpenWrt source inside container (已加入防网络死锁与二重格式清洗)
       # ------------------------------------------------------------------
       - name: Prepare OpenWrt source
         run: |
@@ -110,6 +110,17 @@ jobs:
             -e UPSTREAM_BRANCH="${UPSTREAM_BRANCH}" \
             -e GH_TOKEN="${GH_TOKEN}" \
             DK bash -euxc '
+            # ==================================================================
+            # APT 编译环境加速与防卡死核心优化 (终极增强版)
+            # ==================================================================
+            echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4
+            echo "Acquire::http::Timeout \"10\";" > /etc/apt/apt.conf.d/99timeouts
+            echo "Acquire::Retries \"2\";" >> /etc/apt/apt.conf.d/99timeouts
+
+            find /etc/apt/ -name "*.list" -o -name "*.sources" | xargs -I {} sed -i "s|http://ports.ubuntu.com|http://mirrors.ustc.edu.cn|g" {} 2>/dev/null || true
+            find /etc/apt/ -name "*.list" -o -name "*.sources" | xargs -I {} sed -i "s|https://ports.ubuntu.com|http://mirrors.ustc.edu.cn|g" {} 2>/dev/null || true
+            cat /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null | grep -E "URIs|deb " || true
+
             apt-get update -qq
             apt-get install -y --no-install-recommends \
               build-essential clang flex bison g++ gawk \
@@ -118,7 +129,7 @@ jobs:
               python3 python3-pip python3-venv libelf-dev libdw-dev \
               subversion mercurial cvs asciidoc w3m docbook-xsl xsltproc \
               automake autoconf libtool pkg-config cmake ninja-build \
-              aria2 jq time ccache golang-go patch
+              aria2 jq time ccache golang-go patch dos2unix
 
             mkdir -p /bld/openwrt_bin
             rm -rf /bld/openwrt
@@ -133,17 +144,15 @@ jobs:
             ln -sf /stcache staging_dir
 
             # ==================================================================
-            # 核心安全清理：动态删除所有易导致行号冲突的静态补丁文件 (004 和 006)
+            # 核心安全清理：动态删除所有易导致行号冲突的静态补丁文件
             # ==================================================================
             find /workspace -name "*004-add-upnp-v2ray-geo-packages.patch*" -delete 2>/dev/null || true
             find /workspace -name "*006-add-argon-theme-feed.patch*" -delete 2>/dev/null || true
             find /workspace -name "*argon*.patch" -delete 2>/dev/null || true
             find /workspace -name "*upnp*.patch" -delete 2>/dev/null || true
 
-            # --- 动态注入官方 Nikki 软件源 ---
+            # --- 动态注入官方 Nikki 与 Jerrykuku Argon 软件源 ---
             echo "src-git nikki https://github.com/nikkinikki-org/OpenWrt-nikki.git;main" >> feeds.conf.default
-
-            # --- 动态注入 Jerrykuku Argon 官方主题源 ---
             echo "src-git argon https://github.com/jerrykuku/luci-theme-argon.git" >> feeds.conf.default
 
             ./scripts/feeds update -a
@@ -153,39 +162,33 @@ jobs:
             sed -i "s/192.168.1.1/192.168.10.1/g" package/base-files/files/bin/config_generate
             echo "Default LAN IP changed to 192.168.10.1"
 
-            # 应用本地其余补丁（此时 004 与 006 已被删除，打补丁将顺利通过）
+            # 应用本地其余补丁（此时 004 与 006 已被安全移除，打补丁将顺利通过）
             /workspace/scripts/apply-patches.sh /bld/openwrt
             
             # 复制基础硬件配置文件
             cp /workspace/config/xr1710g-oc.conf .config
 
+            # ==================================================================
+            # 核心格式防护 1：在向 .config 追加内容之前，先强行清理 Windows 回车符
+            # ==================================================================
+            sed -i "s/\r$//g" .config
+
             # --- 追加所有的自定义功能、Nikki、UPnP、V2Ray 与 kmod 依赖 ---
             cat >> .config <<EOF
-            # 解决路由包冲突：取消默认简陋版 ip 工具，强制启用 ip-full
             # CONFIG_PACKAGE_ip is not set
             CONFIG_PACKAGE_ip-full=y
-
-            # 基础系统与防火墙组件
             CONFIG_PACKAGE_ca-bundle=y
             CONFIG_PACKAGE_curl=y
             CONFIG_PACKAGE_yq=y
             CONFIG_PACKAGE_firewall4=y
-
-            # Nikki 主程序与 LuCI 简体中文界面
             CONFIG_PACKAGE_nikki=y
             CONFIG_PACKAGE_luci-app-nikki=y
             CONFIG_PACKAGE_luci-i18n-nikki-zh-cn=y
-
-            # --- 替代原本 004 补丁：动态集成 UPnP 及其防火墙后台和中文包 ---
             CONFIG_PACKAGE_luci-app-upnp=y
             CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y
             CONFIG_PACKAGE_miniupnpd-nftables=y
-
-            # --- 替代原本 004 补丁：动态集成 V2Ray GeoIP/GeoSite 数据库 ---
             CONFIG_PACKAGE_v2ray-geoip=y
             CONFIG_PACKAGE_v2ray-geosite=y
-
-            # 核心内核模块 (kmod) - 处理 TPROXY 透明代理与 TUN 模式必须
             CONFIG_PACKAGE_kmod-inet-diag=y
             CONFIG_PACKAGE_kmod-nft-socket=y
             CONFIG_PACKAGE_kmod-nft-tproxy=y
@@ -195,6 +198,11 @@ jobs:
 
             # 运行 defconfig 展开配置文件并自动校验依赖关系
             make defconfig
+
+            # ==================================================================
+            # 核心格式防护 2：defconfig 结束后，再次强行清洗新生成的 .config
+            # ==================================================================
+            sed -i "s/\r$//g" .config
 
             echo "=== Key config selections ==="
             grep -E "^CONFIG_TARGET|^CONFIG_PACKAGE_nikki|^CONFIG_PACKAGE_luci-app-upnp|^CONFIG_PACKAGE_v2ray-geoip|^CONFIG_PACKAGE_kmod-nft|^CONFIG_CCACHE" .config || true
@@ -218,7 +226,7 @@ jobs:
           '
 
       # ------------------------------------------------------------------
-      # 8. Configure ccache and build (自动降级单线程报错容错)
+      # 8. Configure ccache and build (自动降级单线程报错容错 + 三重格式洗净)
       # ------------------------------------------------------------------
       - name: Compile OpenWrt
         run: |
@@ -236,6 +244,11 @@ jobs:
             export CCACHE_SLOPPINESS=file_stat_matches,include_file_mtime,time_macros
             export CCACHE_NOHASHDIR=true
             export CCACHE_COMPILERCHECK=content
+
+            # ==================================================================
+            # 核心格式防护 3：编译准备前终极洗净，确保 Make 绝对不抛 CR 错误
+            # ==================================================================
+            sed -i "s/\r$//g" .config
 
             sed -i "s/# CONFIG_CCACHE is not set/CONFIG_CCACHE=y/" .config
             ccache -M 5G
