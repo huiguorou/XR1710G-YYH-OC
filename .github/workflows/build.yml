@@ -98,8 +98,8 @@ jobs:
             "$IMAGE"
           echo "Container started"
 
-      # ------------------------------------------------------------------
-      # 6. Prepare OpenWrt source inside container (加入终极语法过滤与诊断)
+# ------------------------------------------------------------------
+      # 6. Prepare OpenWrt source inside container (采用极简 Grep 白名单免疫清洗)
       # ------------------------------------------------------------------
       - name: Prepare OpenWrt source
         run: |
@@ -181,19 +181,14 @@ jobs:
             make defconfig
 
             # ==================================================================
-            # 终极语法净化与精准调试输出
+            # 终极净化：Grep 白名单一键过滤，绝对不留任何非法语法行
             # ==================================================================
-            # 1. 打印第 145~155 行周围内容，让你能在 Actions 日志里看清原凶是谁
-            echo "=== Diagnostic: Inspecting lines 145-158 of generated .config ==="
-            sed -n "145,158p" .config || true
-
-            # 2. 物理清洗 Windows CRLF 和首尾空格
             sed -i "s/\r$//g" .config
             sed -i "s/^[ \t]*//g" .config
             sed -i "s/[ \t]*$//g" .config
 
-            # 3. 【绝对免疫防线】直接杀掉任何非注释、非赋值、非空的语法非法行！
-            sed -i "/^#/! { /=/! { /^$/!d } }" .config
+            # 【白名单杀手锏】只保留注释(#)、空行(^$)和变量赋值(=)
+            grep -E "^#|^$|=" .config > .config.clean && mv .config.clean .config
 
             echo "=== Key config selections after sanitization ==="
             grep -E "^CONFIG_TARGET|^CONFIG_PACKAGE_nikki|^CONFIG_PACKAGE_luci-app-upnp|^CONFIG_PACKAGE_v2ray-geoip|^CONFIG_PACKAGE_kmod-nft|^CONFIG_CCACHE" .config || true
@@ -217,7 +212,7 @@ jobs:
           '
 
       # ------------------------------------------------------------------
-      # 8. Configure ccache and build (编译准备前再次执行语法过滤)
+      # 8. Configure ccache and build (极简白名单二次过滤，必过 Make)
       # ------------------------------------------------------------------
       - name: Compile OpenWrt
         run: |
@@ -236,13 +231,13 @@ jobs:
             export CCACHE_NOHASHDIR=true
             export CCACHE_COMPILERCHECK=content
 
-            # ==================================================================
-            # 编译前最终验证与过滤，100% 杜绝 missing separator
-            # ==================================================================
+            # 【编译前终极抓错诊断】输出 150~165 行，看清楚谁是鬼
+            echo "=== DIAGNOSTIC: Printing lines 150-165 of .config before make ==="
+            sed -n "150,165p" .config | cat -A || true
+
+            # 【极简白名单杀手锏】确保交给 make 的每一行都是绝对合法的
             sed -i "s/\r$//g" .config
-            sed -i "s/^[ \t]*//g" .config
-            sed -i "s/[ \t]*$//g" .config
-            sed -i "/^#/! { /=/! { /^$/!d } }" .config
+            grep -E "^#|^$|=" .config > .config.clean && mv .config.clean .config
 
             sed -i "s/# CONFIG_CCACHE is not set/CONFIG_CCACHE=y/" .config
             ccache -M 5G
