@@ -98,8 +98,8 @@ jobs:
             "$IMAGE"
           echo "Container started"
 
-# ------------------------------------------------------------------
-      # 6. Prepare OpenWrt source inside container (采用极简 Grep 白名单免疫清洗)
+      # ------------------------------------------------------------------
+      # 6. Prepare OpenWrt source inside container (彻底规避 EOF 锁并实现终极清洗)
       # ------------------------------------------------------------------
       - name: Prepare OpenWrt source
         run: |
@@ -110,10 +110,14 @@ jobs:
             -e UPSTREAM_BRANCH="${UPSTREAM_BRANCH}" \
             -e GH_TOKEN="${GH_TOKEN}" \
             DK bash -euxc '
+            # ==================================================================
+            # 1. APT 编译环境加速与防卡死核心优化 (终极增强版)
+            # ==================================================================
             echo "Acquire::ForceIPv4 \"true\";" > /etc/apt/apt.conf.d/99force-ipv4
             echo "Acquire::http::Timeout \"10\";" > /etc/apt/apt.conf.d/99timeouts
             echo "Acquire::Retries \"2\";" >> /etc/apt/apt.conf.d/99timeouts
 
+            # 彻底将默认 Ports 源替换为中科大高速镜像源
             find /etc/apt/ -name "*.list" -o -name "*.sources" | xargs -I {} sed -i "s|http://ports.ubuntu.com|http://mirrors.ustc.edu.cn|g" {} 2>/dev/null || true
             find /etc/apt/ -name "*.list" -o -name "*.sources" | xargs -I {} sed -i "s|https://ports.ubuntu.com|http://mirrors.ustc.edu.cn|g" {} 2>/dev/null || true
 
@@ -132,32 +136,49 @@ jobs:
             mkdir -p /bld/openwrt
             cd /bld/openwrt
             git clone --depth=1 --branch="$UPSTREAM_BRANCH" "$UPSTREAM_REPO" .
+            git log -1 --format="Upstream HEAD: %H %s (%ci)"
 
             rm -rf bin dl staging_dir 2>/dev/null || true
             ln -sf /bld/openwrt_bin bin
             ln -sf /dlcache dl
             ln -sf /stcache staging_dir
 
-            # 删除可能报错的冲突静态补丁
+            # ==================================================================
+            # 2. 核心安全清理：动态删除所有易导致行号冲突的静态补丁文件
+            # ==================================================================
             find /workspace -name "*004-add-upnp-v2ray-geo-packages.patch*" -delete 2>/dev/null || true
             find /workspace -name "*006-add-argon-theme-feed.patch*" -delete 2>/dev/null || true
             find /workspace -name "*argon*.patch" -delete 2>/dev/null || true
             find /workspace -name "*upnp*.patch" -delete 2>/dev/null || true
 
-            # 动态追加软件源
+            # --- 动态注入官方 Nikki 与 Jerrykuku Argon 软件源 ---
             echo "src-git nikki https://github.com/nikkinikki-org/OpenWrt-nikki.git;main" >> feeds.conf.default
             echo "src-git argon https://github.com/jerrykuku/luci-theme-argon.git" >> feeds.conf.default
 
             ./scripts/feeds update -a
             ./scripts/feeds install -a
             
+            # --- 将默认 LAN IP 修改为 192.168.10.1 ---
             sed -i "s/192.168.1.1/192.168.10.1/g" package/base-files/files/bin/config_generate
+            echo "Default LAN IP changed to 192.168.10.1"
 
+            # 应用本地其余补丁
             /workspace/scripts/apply-patches.sh /bld/openwrt
+            
+            # 复制基础硬件配置文件
             cp /workspace/config/xr1710g-oc.conf .config
 
-            # 追加定制依赖
-            cat >> .config <<EOF
+            # ==================================================================
+            # 3. 核心格式防护 1：在向 .config 追加内容前，先强行清洗格式
+            # ==================================================================
+            sed -i "s/\r$//g" .config
+            sed -i "s/^[ \t]*//g" .config
+            sed -i "s/[ \t]*$//g" .config
+
+            # ==================================================================
+            # 4. 【终极防线】采用单引号跨行追加，彻底避免 YAML/EOF 缩进解析漏洞！
+            # ==================================================================
+            echo '
             CONFIG_PACKAGE_ip-full=y
             CONFIG_PACKAGE_ca-bundle=y
             CONFIG_PACKAGE_curl=y
@@ -176,21 +197,22 @@ jobs:
             CONFIG_PACKAGE_kmod-nft-tproxy=y
             CONFIG_PACKAGE_kmod-tun=y
             CONFIG_PACKAGE_kmod-dummy=y
-            EOF
+            ' >> .config
 
+            # 运行 defconfig 展开配置文件并自动校验依赖关系
             make defconfig
 
             # ==================================================================
-            # 终极净化：Grep 白名单一键过滤，绝对不留任何非法语法行
+            # 5. 核心格式防护 2：defconfig 结束后进行强力格式清洗
             # ==================================================================
             sed -i "s/\r$//g" .config
             sed -i "s/^[ \t]*//g" .config
             sed -i "s/[ \t]*$//g" .config
 
-            # 【白名单杀手锏】只保留注释(#)、空行(^$)和变量赋值(=)
+            # 仅保留合法行：注释(#)、空行(^$)、等号赋值(=)，其余一概剔除
             grep -E "^#|^$|=" .config > .config.clean && mv .config.clean .config
 
-            echo "=== Key config selections after sanitization ==="
+            echo "=== Key config selections ==="
             grep -E "^CONFIG_TARGET|^CONFIG_PACKAGE_nikki|^CONFIG_PACKAGE_luci-app-upnp|^CONFIG_PACKAGE_v2ray-geoip|^CONFIG_PACKAGE_kmod-nft|^CONFIG_CCACHE" .config || true
           '
 
@@ -212,7 +234,7 @@ jobs:
           '
 
       # ------------------------------------------------------------------
-      # 8. Configure ccache and build (极简白名单二次过滤，必过 Make)
+      # 8. Configure ccache and build (编译前终极清洗)
       # ------------------------------------------------------------------
       - name: Compile OpenWrt
         run: |
@@ -231,12 +253,12 @@ jobs:
             export CCACHE_NOHASHDIR=true
             export CCACHE_COMPILERCHECK=content
 
-            # 【编译前终极抓错诊断】输出 150~165 行，看清楚谁是鬼
-            echo "=== DIAGNOSTIC: Printing lines 150-165 of .config before make ==="
-            sed -n "150,165p" .config | cat -A || true
-
-            # 【极简白名单杀手锏】确保交给 make 的每一行都是绝对合法的
+            # ==================================================================
+            # 编译准备前终极净化，确保 Make 绝对不抛格式错误
+            # ==================================================================
             sed -i "s/\r$//g" .config
+            sed -i "s/^[ \t]*//g" .config
+            sed -i "s/[ \t]*$//g" .config
             grep -E "^#|^$|=" .config > .config.clean && mv .config.clean .config
 
             sed -i "s/# CONFIG_CCACHE is not set/CONFIG_CCACHE=y/" .config
@@ -246,10 +268,12 @@ jobs:
             make -j$(($(nproc) + 1)) tools/install V=s 2>&1 | tail -20
             make -j$(($(nproc) + 1)) toolchain/install V=s 2>&1 | tail -20
 
+            # 优先全速多线程编译；如果出错，自动降级为单线程 V=s 重新编译并输出详细错误日志
             make -j$(($(nproc) + 1)) || make -j1 V=s
 
             ccache -s
           '
+
       # ------------------------------------------------------------------
       # 9. Collect artifacts.
       # ------------------------------------------------------------------
@@ -302,7 +326,7 @@ jobs:
           
           TAG="xr1710g-yyh-oc-$(date -u '+%Y%m%d-%H%M%S')"
           
-          # --- 仅仅上传 release-assets 下的 .itb 文件到 GitHub Releases ---
+          # --- 仅仅上传 release-assets 下 of .itb 文件到 GitHub Releases ---
           gh release create "${TAG}" release-assets/*.itb \
             --title "XR1710G-YYH-OC $(date -u '+%Y-%m-%d %H:%M')" \
             --notes "ARM native build. Default LAN IP: 192.168.10.1. Upload the .itb file via LuCI > System > Backup/Flash Firmware."
